@@ -1,12 +1,15 @@
 import cv2
 import torch
 import numpy as np
-import pygame
 import time
 import threading
 import smbus2
 import pathlib
 from pathlib import Path
+import os
+from gtts import gTTS
+from pydub import AudioSegment
+import simpleaudio as sa
 
 # pathlib 경로 설정
 temp = pathlib.PosixPath
@@ -28,14 +31,37 @@ def read_light(addr=BH1750_ADDRESS):
         return 1000  # 에러 발생 시 높은 값 반환
 
 # 특정 조도 값 (임계값)
-LIGHT_THRESHOLD = 10
+LIGHT_THRESHOLD = 15
 
 # YOLOv5 모델 로드 (로컬 경로 사용)
 model = torch.hub.load('.', 'custom', path='./best.pt', source='local', device='cuda' if torch.cuda.is_available() else 'cpu')
 
-# Pygame 초기화 및 스피커 설정
-pygame.mixer.init()
-pygame.mixer.music.load("./helmet.mp3")
+# 시스템 볼륨을 최대로 설정하는 함수 (Linux용)
+def set_system_volume_to_max():
+    os.system("amixer -D pulse sset Master 100%")
+
+# 코드 시작 시 볼륨을 최대로 설정
+set_system_volume_to_max()
+
+# 텍스트를 음성으로 변환하여 재생하는 함수
+def speak(text):
+    # 텍스트를 음성으로 변환
+    tts = gTTS(text=text, lang='ko')
+    # 음성 파일 저장
+    tts.save("output.mp3")
+
+    # MP3 파일을 로드하고 WAV로 변환
+    audio = AudioSegment.from_mp3("output.mp3")
+    audio.export("output.wav", format="wav")
+
+    # WAV 파일 재생
+    wave_obj = sa.WaveObject.from_wave_file("output.wav")
+    play_obj = wave_obj.play()
+    play_obj.wait_done()  # 재생이 끝날 때까지 대기
+
+    # 임시 파일 삭제
+    os.remove("output.mp3")
+    os.remove("output.wav")
 
 # 웹캠 설정
 cap = cv2.VideoCapture(0)
@@ -110,19 +136,16 @@ while True:
             # 헬멧 미착용 감지 (정확도 0.8 이하)
             helmet_detected = False
             for label, confidence in zip(labels, confidences):
-                if label == 'helmet' and confidence > 0.8:
+                if label == 'helmet' and confidence > 0.4:
                     helmet_detected = True
                     break
 
             if not helmet_detected:
                 print("Helmet not detected or confidence too low!")
-                if not pygame.mixer.music.get_busy():
-                    print("Playing warning sound...")
-                    pygame.mixer.music.play()
+                speak("헬멧을 착용하세요")  # 경고음 대신 음성 출력
             else:
-                if pygame.mixer.music.get_busy():
-                    print("Stopping warning sound...")
-                    pygame.mixer.music.stop()
+                # 필요에 따라 다른 작업을 수행할 수 있습니다.
+                pass
 
             # 결과 이미지 렌더링
             annotated_frame = np.squeeze(results.render())
@@ -141,7 +164,7 @@ while True:
     # 프레임 처리 시간 계산
     elapsed_time = time.time() - start_time
     sleep_time = max(0, frame_duration - elapsed_time)
-    time.sleep(0.02)
+    time.sleep(0.001)
     
 cap.release()
 cv2.destroyAllWindows()
